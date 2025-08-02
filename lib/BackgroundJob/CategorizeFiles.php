@@ -11,6 +11,7 @@ use OCP\ITagManager;
 use OCP\IUser;
 use OCP\IUserManager;
 use OCP\Http\Client\IClientService;
+use OCP\ITimeFactory;
 use Psr\Log\LoggerInterface;
 use Smalot\PdfParser\Parser;
 
@@ -24,13 +25,17 @@ class CategorizeFiles extends Job {
     private LoggerInterface $logger;
 
     public function __construct(
-        IConfig $config, IRootFolder $rootFolder, IUserManager $userManager,
-        ITagManager $tagManager, IClientService $clientService, LoggerInterface $logger
+        // This is the new required dependency
+        ITimeFactory $timeFactory,
+        IConfig $config,
+        IRootFolder $rootFolder,
+        IUserManager $userManager,
+        ITagManager $tagManager,
+        IClientService $clientService,
+        LoggerInterface $logger
     ) {
-        // This is the crucial line that was missing.
-        // It calls the constructor of the parent Job class to ensure
-        // essential properties like `$time` are initialized correctly.
-        parent::__construct();
+        // Pass the required TimeFactory to the parent constructor
+        parent::__construct($timeFactory);
 
         $this->config = $config;
         $this->rootFolder = $rootFolder;
@@ -41,8 +46,6 @@ class CategorizeFiles extends Job {
     }
 
     protected function run($argument): void {
-        // The second part of the error "(arguments: null)" suggests the job might
-        // sometimes run without arguments. This check handles that gracefully.
         if (!is_array($argument) || !isset($argument['userId'])) {
             $this->logger->error("CategorizeFiles job ran without a valid userId argument. Halting.");
             return;
