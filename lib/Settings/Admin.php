@@ -43,16 +43,16 @@ class Admin implements ISettings {
     }
 
     /**
-	 * @return string the human-readable name of the section
-	 */
-	public function getName(): string {
-		return 'PDF Auto Tagger'; // The name displayed in the settings navigation
-	}
+     * @return string the human-readable name of the section
+     */
+     public function getName(): string {
+	return 'PDF Auto Tagger'; // The name displayed in the settings navigation
+     }
 
     /**
      * @return int whether the form should be rather on the top or bottom of all list elements
      */
-    public function getPriority(): int {
+     public function getPriority(): int {
         return 50; // Controls the order in the settings menu
-    }
+     }
 }
