@@ -7,6 +7,7 @@ use OCP\Files\Folder;
 use OCP\Files\IRootFolder;
 use OCP\Files\NotFoundException;
 use OCP\IConfig;
+use OCP\IContainer;
 use OCP\ITagManager;
 use OCP\IUser;
 use OCP\IUserManager;
@@ -17,165 +18,150 @@ use Smalot\PdfParser\Parser;
 
 class CategorizeFiles extends Job {
 
-    private IConfig $config;
-    private IRootFolder $rootFolder;
-    private IUserManager $userManager;
-    private ITagManager $tagManager;
-    private IClientService $clientService;
-    private LoggerInterface $logger;
+    protected IContainer $container;
 
-    public function __construct(
-        // This is the new required dependency
-        ITimeFactory $timeFactory,
-        IConfig $config,
-        IRootFolder $rootFolder,
-        IUserManager $userManager,
-        ITagManager $tagManager,
-        IClientService $clientService,
-        LoggerInterface $logger
-    ) {
-        // Pass the required TimeFactory to the parent constructor
+    // The constructor is now much simpler. We only ask for the services
+    // that the Job class itself requires, plus the main service container.
+    public function __construct(ITimeFactory $timeFactory, IContainer $container) {
         parent::__construct($timeFactory);
-
-        $this->config = $config;
-        $this->rootFolder = $rootFolder;
-        $this->userManager = $userManager;
-        $this->tagManager = $tagManager;
-        $this->clientService = $clientService;
-        $this->logger = $logger;
+        $this->container = $container;
     }
 
+    /**
+     * This is the main execution method for the job.
+     */
     protected function run($argument): void {
+        // At runtime, we get all the services we need from the container.
+        $config = $this->container->get(IConfig::class);
+        $userManager = $this->container->get(IUserManager::class);
+        $logger = $this->container->get(LoggerInterface::class);
+
         if (!is_array($argument) || !isset($argument['userId'])) {
-            $this->logger->error("CategorizeFiles job ran without a valid userId argument. Halting.");
+            $logger->error("CategorizeFiles job ran without a valid userId argument. Halting.");
             return;
         }
         $userId = $argument['userId'];
 
-        $user = $this->userManager->get($userId);
+        $user = $userManager->get($userId);
         if (!$user) {
-            $this->logger->error("User '$userId' not found for categorization job.");
+            $logger->error("User '$userId' not found for categorization job.");
             return;
         }
-        $this->logger->info("Starting PDF categorization job for user: " . $user->getUID());
-        $this->userManager->runAsUser($user, function () use ($user) {
-            $this->processUserFiles($user);
+        $logger->info("Starting PDF categorization job for user: " . $user->getUID());
+
+        // We still use runAsUser to ensure permissions are correct.
+        $userManager->runAsUser($user, function () use ($user, $config, $logger) {
+            $this->processUserFiles($user, $config, $logger);
         });
     }
 
-    private function processUserFiles(IUser $user): void {
+    /**
+     * Contains the logic to find and process files for a specific user.
+     */
+    private function processUserFiles(IUser $user, IConfig $config, LoggerInterface $logger): void {
+        // We get the remaining services we need here.
+        $rootFolder = $this->container->get(IRootFolder::class);
+        $tagManager = $this->container->get(ITagManager::class);
+        $clientService = $this->container->get(IClientService::class);
+
         $appName = 'pdf_tagger';
-        $usePdfParser = $this->config->getAppValue($appName, 'use_pdf_parser', '1') === '1';
-        $ollamaUrl = $this->config->getAppValue($appName, 'ollama_url');
-        $model = $this->config->getAppValue($appName, 'model_name');
-        $foldersStr = $this->config->getAppValue($appName, 'scan_folders', '');
-        $tagsStr = $this->config->getAppValue($appName, 'available_tags', '');
+        $usePdfParser = $config->getAppValue($appName, 'use_pdf_parser', '1') === '1';
+        $ollamaUrl = $config->getAppValue($appName, 'ollama_url');
+        $model = $config->getAppValue($appName, 'model_name');
+        $foldersStr = $config->getAppValue($appName, 'scan_folders', '');
+        $tagsStr = $config->getAppValue($appName, 'available_tags', '');
 
         if (empty($ollamaUrl) || empty($model) || empty($foldersStr) || empty($tagsStr)) {
-            $this->logger->warning("PDF Tagger is not fully configured for user '{$user->getUID()}'. Halting job.");
+            $logger->warning("PDF Tagger is not fully configured for user '{$user->getUID()}'. Halting job.");
             return;
         }
 
         $folders = array_map('trim', explode(',', $foldersStr));
         $availableTags = array_map('trim', explode(',', $tagsStr));
-        $userFolder = $this->rootFolder->getUserFolder($user->getUID());
+        $userFolder = $rootFolder->getUserFolder($user->getUID());
 
         foreach ($folders as $folderPath) {
             try {
                 $node = $userFolder->get($folderPath);
                 if ($node instanceof Folder) {
-                    $this->processFolder($node, $availableTags, $usePdfParser, $ollamaUrl, $model);
+                    $this->processFolder($node, $availableTags, $usePdfParser, $ollamaUrl, $model, $tagManager, $clientService, $logger);
                 }
             } catch (NotFoundException $e) {
-                $this->logger->warning("Folder not found: '$folderPath' for user {$user->getUID()}");
+                $logger->warning("Folder not found: '$folderPath' for user {$user->getUID()}");
             }
         }
     }
 
-    private function processFolder(Folder $folder, array $availableTags, bool $usePdfParser, string $ollamaUrl, string $model): void {
+    private function processFolder(Folder $folder, array $availableTags, bool $usePdfParser, string $ollamaUrl, string $model, ITagManager $tagManager, IClientService $clientService, LoggerInterface $logger): void {
         foreach ($folder->getDirectoryListing() as $node) {
             if ($node instanceof File && strtolower($node->getExtension()) === 'pdf') {
-                $this->processFile($node, $availableTags, $usePdfParser, $ollamaUrl, $model);
+                $this->processFile($node, $availableTags, $usePdfParser, $ollamaUrl, $model, $tagManager, $clientService, $logger);
             }
         }
     }
 
-    private function processFile(File $file, array $availableTags, bool $usePdfParser, string $ollamaUrl, string $model): void {
-        $fileTagsObject = $this->tagManager->getTagsForObjects([$file->getId()]);
+    private function processFile(File $file, array $availableTags, bool $usePdfParser, string $ollamaUrl, string $model, ITagManager $tagManager, IClientService $clientService, LoggerInterface $logger): void {
+        $fileTagsObject = $tagManager->getTagsForObjects([$file->getId()]);
         $existingTags = $fileTagsObject[$file->getId()] ?? [];
         if (!empty(array_intersect($existingTags, $availableTags))) {
-            $this->logger->info("Skipping file with existing tag: " . $file->getPath());
+            $logger->info("Skipping file with existing tag: " . $file->getPath());
             return;
         }
 
         $chosenTag = null;
         if ($usePdfParser) {
-            // MODE 1: Extract text and send to a text model
             try {
                 $parser = new Parser();
                 $pdf = $parser->parseContent($file->getContent());
                 $text = mb_substr($pdf->getText(), 0, 4000);
                 if (empty(trim($text))) {
-                    $this->logger->warning("PDF '{$file->getPath()}' contains no extractable text.");
+                    $logger->warning("PDF '{$file->getPath()}' contains no extractable text.");
                     return;
                 }
-                $chosenTag = $this->getTagFromOllamaText($text, $availableTags, $ollamaUrl, $model);
+                $chosenTag = $this->getTagFromOllamaText($text, $availableTags, $ollamaUrl, $model, $clientService, $logger);
             } catch (\Exception $e) {
-                $this->logger->error("Failed to parse PDF '{$file->getPath()}': " . $e->getMessage());
+                $logger->error("Failed to parse PDF '{$file->getPath()}': " . $e->getMessage());
                 return;
             }
         } else {
-            // MODE 2: Base64 encode the whole file and send to a multi-modal model
             $pdfContent = $file->getContent();
             if (empty($pdfContent)) {
-                $this->logger->warning("PDF '{$file->getPath()}' is empty.");
+                $logger->warning("PDF '{$file->getPath()}' is empty.");
                 return;
             }
             $base64Pdf = base64_encode($pdfContent);
-            $chosenTag = $this->getTagFromOllamaFile($base64Pdf, $availableTags, $ollamaUrl, $model);
+            $chosenTag = $this->getTagFromOllamaFile($base64Pdf, $availableTags, $ollamaUrl, $model, $clientService, $logger);
         }
 
         if ($chosenTag && in_array($chosenTag, $availableTags)) {
-            $this->tagManager->tagAs($file->getId(), $chosenTag);
-            $this->logger->info("Tagged '{$file->getName()}' as '{$chosenTag}'");
+            $tagManager->tagAs($file->getId(), $chosenTag);
+            $logger->info("Tagged '{$file->getName()}' as '{$chosenTag}'");
         } else {
-            $this->logger->warning("Ollama returned an invalid or empty tag ('$chosenTag') for file: " . $file->getPath());
+            $logger->warning("Ollama returned an invalid or empty tag ('$chosenTag') for file: " . $file->getPath());
         }
     }
 
-    private function getTagFromOllamaText(string $text, array $tags, string $url, string $model): ?string {
+    private function getTagFromOllamaText(string $text, array $tags, string $url, string $model, IClientService $clientService, LoggerInterface $logger): ?string {
         $prompt = "Analyze the following document text and classify it using exactly one tag from this list: [" . implode(', ', $tags) . "]. Respond with only the single most appropriate tag and nothing else.\n\nText: \"$text\"";
-        $payload = [
-            'model' => $model,
-            'prompt' => $prompt,
-            'stream' => false
-        ];
-        return $this->sendToOllama($payload, $url);
+        $payload = ['model' => $model, 'prompt' => $prompt, 'stream' => false];
+        return $this->sendToOllama($payload, $url, $clientService, $logger);
     }
 
-    private function getTagFromOllamaFile(string $base64Content, array $tags, string $url, string $model): ?string {
+    private function getTagFromOllamaFile(string $base64Content, array $tags, string $url, string $model, IClientService $clientService, LoggerInterface $logger): ?string {
         $prompt = "You are a document classification expert. Analyze the provided document and classify it using exactly one of the following tags: [" . implode(', ', $tags) . "]. Your response must be only the single, most appropriate tag from the list. Do not add any explanation or punctuation.";
-        $payload = [
-            'model' => $model,
-            'prompt' => $prompt,
-            'stream' => false,
-            'images' => [$base64Content]
-        ];
-        return $this->sendToOllama($payload, $url);
+        $payload = ['model' => $model, 'prompt' => $prompt, 'stream' => false, 'images' => [$base64Content]];
+        return $this->sendToOllama($payload, $url, $clientService, $logger);
     }
 
-    private function sendToOllama(array $payload, string $url): ?string {
+    private function sendToOllama(array $payload, string $url, IClientService $clientService, LoggerInterface $logger): ?string {
         try {
-            $client = $this->clientService->newClient();
-            $response = $client->post("$url/api/generate", [
-                'json' => $payload,
-                'timeout' => 120,
-            ]);
+            $client = $clientService->newClient();
+            $response = $client->post("$url/api/generate", ['json' => $payload, 'timeout' => 120]);
             $contents = $response->getBody()->getContents();
             $data = json_decode($contents, true);
             return trim($data['response'] ?? '', " \t\n\r\0\x0B\"");
         } catch (\Exception $e) {
-            $this->logger->error("Ollama API request failed: " . $e->getMessage());
+            $logger->error("Ollama API request failed: " . $e->getMessage());
             return null;
         }
     }
