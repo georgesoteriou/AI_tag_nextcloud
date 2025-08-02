@@ -9,12 +9,12 @@ This app scans specified folders for untagged PDF files and uses a local Ollama 
 **Important:** This version sends the entire PDF file to Ollama and requires a multi-modal model (like LLaVA) that can understand document content.
     ]]></description>
     <version>0.0.1</version>
-    <author>Your Name</author>
+    <author>George Soteriou</author>
     <namespace>PdfTagger</namespace>
     <category>tools</category>
     <icon>icon.svg</icon>
     <dependencies>
-        <nextcloud min-version="25" max-version="28" />
+        <nextcloud min-version="25" max-version="31" />
     </dependencies>
     <settings>
         <admin>OCA\PdfTagger\Settings\Admin</admin>
