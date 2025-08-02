@@ -1,0 +1,13 @@
+{
+    "name": "georgesoteriou/pdf_tagger",
+    "description": "A Nextcloud app to automatically tag PDFs using Ollama.",
+    "type": "nextcloud-app",
+    "require": {
+        "smalot/pdfparser": "^2.1"
+    },
+    "autoload": {
+        "psr-4": {
+            "OCA\\PdfTagger\\": "lib/"
+        }
+    }
+}
