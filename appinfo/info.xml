@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<info>
+    <id>pdf_tagger</id>
+    <name>PDF Auto Tagger</name>
+    <summary>Automatically categorizes and tags PDF files using a local Ollama instance.</summary>
+    <description><![CDATA[
+This app scans specified folders for untagged PDF files and uses a local Ollama instance to assign a relevant tag from a predefined list.
+
+**Important:** This version sends the entire PDF file to Ollama and requires a multi-modal model (like LLaVA) that can understand document content.
+    ]]></description>
+    <version>0.0.1</version>
+    <author>Your Name</author>
+    <namespace>PdfTagger</namespace>
+    <category>tools</category>
+    <icon>icon.svg</icon>
+    <dependencies>
+        <nextcloud min-version="25" max-version="28" />
+    </dependencies>
+    <settings>
+        <admin>OCA\PdfTagger\Settings\Admin</admin>
+    </settings>
+    <background-jobs>
+        <job>OCA\PdfTagger\BackgroundJob\CategorizeFiles</job>
+    </background-jobs>
+    <routes>
+        <route url="/start_categorization" verb="POST">
+            <action>OCA\PdfTagger\Controller\AjaxController#startCategorization</action>
+        </route>
+    </routes>
+</info>
+
