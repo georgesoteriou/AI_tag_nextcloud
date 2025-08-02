@@ -27,6 +27,11 @@ class CategorizeFiles extends Job {
         IConfig $config, IRootFolder $rootFolder, IUserManager $userManager,
         ITagManager $tagManager, IClientService $clientService, LoggerInterface $logger
     ) {
+        // This is the crucial line that was missing.
+        // It calls the constructor of the parent Job class to ensure
+        // essential properties like `$time` are initialized correctly.
+        parent::__construct();
+
         $this->config = $config;
         $this->rootFolder = $rootFolder;
         $this->userManager = $userManager;
@@ -36,11 +41,14 @@ class CategorizeFiles extends Job {
     }
 
     protected function run($argument): void {
-        $userId = $argument['userId'] ?? null;
-        if (!$userId) {
-            $this->logger->error("CategorizeFiles job ran without a userId.");
+        // The second part of the error "(arguments: null)" suggests the job might
+        // sometimes run without arguments. This check handles that gracefully.
+        if (!is_array($argument) || !isset($argument['userId'])) {
+            $this->logger->error("CategorizeFiles job ran without a valid userId argument. Halting.");
             return;
         }
+        $userId = $argument['userId'];
+
         $user = $this->userManager->get($userId);
         if (!$user) {
             $this->logger->error("User '$userId' not found for categorization job.");
@@ -169,4 +177,3 @@ class CategorizeFiles extends Job {
         }
     }
 }
-
