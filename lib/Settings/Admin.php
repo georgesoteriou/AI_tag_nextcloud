@@ -5,6 +5,7 @@ use OCP\IConfig;
 use OCP\Settings\ISettings;
 use OCP\Template;
 use OCP\Util;
+use OCP\Settings\Form;
 
 class Admin implements ISettings {
     private IConfig $config;
@@ -43,16 +44,26 @@ class Admin implements ISettings {
     }
 
     /**
-     * @return string the human-readable name of the section
-     */
-     public function getName(): string {
-	return 'PDF Auto Tagger'; // The name displayed in the settings navigation
-     }
+	 * @return string the human-readable name of the section
+	 */
+	public function getName(): string {
+		return 'PDF Auto Tagger'; // The name displayed in the settings navigation
+	}
 
     /**
      * @return int whether the form should be rather on the top or bottom of all list elements
      */
-     public function getPriority(): int {
+    public function getPriority(): int {
         return 50; // Controls the order in the settings menu
-     }
+    }
+
+    /**
+     * This method is required in newer Nextcloud versions to comply with the ISettings interface.
+     * Returning null allows the system to fall back to using getPanel().
+     *
+     * @return Form|null
+     */
+    public function getForm(): ?Form {
+        return null;
+    }
 }
